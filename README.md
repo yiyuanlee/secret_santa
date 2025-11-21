@@ -1,2 +1,7 @@
-# secret_santa
-🎅 A festive, spoiler-free Secret Santa generator built with React and Tailwind CSS. Features fair pairing algorithms and immersive holiday UI.
+🎅 Secret Santa Web App (神秘圣诞老人抽签器)一个精美、节日氛围浓厚且防剧透的网页版“神秘圣诞老人”礼物交换生成器。📖 简介 | Introduction这是一个基于 React 构建的单页面应用（SPA），旨在解决节日聚会中“谁送谁礼物”的分配问题。它拥有现代化的 UI 设计和细腻的动效，并且特别设计了**“防剧透模式”**，允许所有参与者在同一台设备上轮流查看自己的送礼对象，而不会看到其他人的结果。✨ 功能亮点 | Features🎄 沉浸式节日 UI：红绿金经典配色。背景雪花飘落与光斑动效。玻璃拟态（Glassmorphism）卡片设计。🔒 防剧透抽签体验：结果生成后默认隐藏。“点击查看 -> 记住 -> 点击隐藏 -> 传给下一位”的交互流程。⚖️ 绝对公平算法：使用 Fisher-Yates 洗牌算法。闭环链条逻辑（A->B, B->C... Z->A），确保每个人既是送礼者也是收礼者。零冲突保证：绝对不会抽到自己。📱 响应式设计：完美适配手机、平板和桌面端。🛠️ 技术栈 | Tech StackFrontend: React (Hooks: useState, useEffect)Styling: Tailwind CSS (Animation, Layout, Responsive)Icons: Lucide React🚀 快速开始 | Quick Start克隆项目git clone [https://github.com/your-username/secret-santa-app.git](https://github.com/your-username/secret-santa-app.git)
+安装依赖npm install
+# 或者
+yarn install
+启动开发服务器npm run dev
+构建生产版本npm run build
+🤝 贡献 | Contributing欢迎提交 Issue 或 Pull Request 来改进这个项目！Made with ❤️ and Holiday Spirit 🎁
