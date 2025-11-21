@@ -44,7 +44,7 @@ Icons: Lucide React
 
 克隆项目
 
-git clone [https://github.com/your-username/secret-santa-app.git](https://github.com/your-username/secret-santa-app.git)
+git clone [https://github.com/yiyuanlee/secret-santa-app.git](https://github.com/your-username/secret-santa-app.git)
 
 
 安装依赖
