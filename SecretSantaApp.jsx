@@ -1,13 +1,16 @@
 import React, { useState } from 'react';
-import { Gift, Trash2, UserPlus, Snowflake, Sparkles, Eye, EyeOff, RotateCcw } from 'lucide-react';
+import { Gift, Trash2, UserPlus, Snowflake, Sparkles, Eye, EyeOff, RotateCcw, User } from 'lucide-react';
 
 const SecretSantaApp = () => {
   const [participants, setParticipants] = useState([]);
   const [currentName, setCurrentName] = useState('');
   const [assignments, setAssignments] = useState([]);
   const [stage, setStage] = useState('input'); // 'input', 'shuffling', 'result'
-  const [revealedCard, setRevealedCard] = useState(null); // ID of the person whose target is currently revealed
   const [error, setError] = useState('');
+
+  // 简化后的状态：只保留 'selection' (选名字) 和 'reveal' (看结果)
+  const [viewStep, setViewStep] = useState('selection');
+  const [currentPair, setCurrentPair] = useState(null); 
 
   // 添加参与者
   const addParticipant = (e) => {
@@ -45,7 +48,6 @@ const SecretSantaApp = () => {
     setError('');
 
     setTimeout(() => {
-      // Fisher-Yates 洗牌算法
       const shuffled = [...participants];
       for (let i = shuffled.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
@@ -55,8 +57,6 @@ const SecretSantaApp = () => {
       const newAssignments = [];
       for (let i = 0; i < shuffled.length; i++) {
         const giver = shuffled[i];
-        // 形成一个闭环链条：A->B, B->C, ..., Z->A
-        // 这样保证每个人既是送礼者也是收礼者，且不会抽到自己
         const receiver = shuffled[(i + 1) % shuffled.length];
         
         newAssignments.push({
@@ -65,19 +65,32 @@ const SecretSantaApp = () => {
         });
       }
 
-      // 将结果按送礼者名字排序，方便查找
       newAssignments.sort((a, b) => a.giver.name.localeCompare(b.giver.name));
       
       setAssignments(newAssignments);
       setStage('result');
-    }, 1500); // 模拟洗牌动画时间
+      setViewStep('selection');
+    }, 1500);
   };
 
   const resetGame = () => {
     setAssignments([]);
     setStage('input');
-    setRevealedCard(null);
+    setViewStep('selection');
+    setCurrentPair(null);
     setError('');
+  };
+
+  // 点击名字直接查看结果（去掉了中间的确认步骤）
+  const handleNameClick = (pair) => {
+    setCurrentPair(pair);
+    setViewStep('reveal');
+  };
+
+  // 关闭结果，回到列表
+  const handleDone = () => {
+    setViewStep('selection');
+    setCurrentPair(null);
   };
 
   return (
@@ -90,10 +103,10 @@ const SecretSantaApp = () => {
         <div className="absolute top-1/2 right-10 text-red-400"><Sparkles size={36} /></div>
       </div>
 
-      <div className="w-full max-w-md bg-white/95 backdrop-blur-sm rounded-2xl shadow-2xl overflow-hidden border-t-4 border-red-600 z-10">
+      <div className="w-full max-w-md bg-white/95 backdrop-blur-sm rounded-2xl shadow-2xl overflow-hidden border-t-4 border-red-600 z-10 flex flex-col" style={{ minHeight: '500px' }}>
         
         {/* 头部 */}
-        <div className="bg-gradient-to-r from-red-600 to-red-700 p-6 text-center relative">
+        <div className="bg-gradient-to-r from-red-600 to-red-700 p-6 text-center relative shrink-0">
           <div className="absolute top-2 right-2">
             <Snowflake className="text-white/30 animate-spin" size={40} />
           </div>
@@ -101,15 +114,14 @@ const SecretSantaApp = () => {
             <Gift className="text-yellow-300" />
             神秘圣诞老人
           </h1>
-          <p className="text-red-100 text-sm mt-2">最公平、最有趣的礼物交换助手</p>
+          {stage === 'input' && <p className="text-red-100 text-sm mt-2">最公平、最有趣的礼物交换助手</p>}
         </div>
 
         {/* 主要内容区域 */}
-        <div className="p-6">
+        <div className="p-6 flex-1 flex flex-col">
           
           {stage === 'input' && (
-            <div className="space-y-6">
-              {/* 输入框 */}
+            <div className="space-y-6 animate-fadeIn">
               <form onSubmit={addParticipant} className="relative">
                 <div className="flex gap-2">
                   <input
@@ -130,7 +142,6 @@ const SecretSantaApp = () => {
                 {error && <p className="text-red-500 text-xs mt-2 absolute -bottom-5 left-1">{error}</p>}
               </form>
 
-              {/* 名单列表 */}
               <div className="bg-slate-50 rounded-xl p-4 min-h-[200px] max-h-[300px] overflow-y-auto custom-scrollbar">
                 <div className="flex justify-between items-center mb-3">
                   <span className="text-sm font-medium text-gray-500">参与名单 ({participants.length})</span>
@@ -166,7 +177,6 @@ const SecretSantaApp = () => {
                 )}
               </div>
 
-              {/* 开始按钮 */}
               <button
                 onClick={generatePairs}
                 disabled={participants.length < 2}
@@ -179,7 +189,7 @@ const SecretSantaApp = () => {
           )}
 
           {stage === 'shuffling' && (
-            <div className="flex flex-col items-center justify-center h-[400px] space-y-6">
+            <div className="flex flex-col items-center justify-center flex-1 space-y-6">
               <div className="relative">
                 <div className="w-24 h-24 bg-red-100 rounded-full flex items-center justify-center animate-ping absolute opacity-20"></div>
                 <Gift size={64} className="text-red-600 animate-bounce relative z-10" />
@@ -192,62 +202,83 @@ const SecretSantaApp = () => {
           )}
 
           {stage === 'result' && (
-            <div className="space-y-4 animate-fadeIn">
-               <div className="bg-yellow-50 border border-yellow-100 rounded-lg p-4 text-sm text-yellow-800 flex gap-3 items-start">
-                  <div className="mt-0.5"><EyeOff size={16}/></div>
-                  <div>
-                    <strong>防剧透模式：</strong> 找到你的名字，点击查看你要送礼的对象。记住后再次点击隐藏，然后把屏幕传给下一个人。
-                  </div>
-               </div>
-
-               <div className="max-h-[400px] overflow-y-auto space-y-3 pr-1 custom-scrollbar">
-                 {assignments.map((pair) => (
-                   <div key={pair.giver.id} className="bg-white border border-gray-100 rounded-xl overflow-hidden shadow-sm">
-                     <button 
-                      onClick={() => setRevealedCard(revealedCard === pair.giver.id ? null : pair.giver.id)}
-                      className={`w-full p-4 flex items-center justify-between transition-colors ${revealedCard === pair.giver.id ? 'bg-red-50' : 'hover:bg-gray-50'}`}
-                     >
-                       <div className="flex items-center gap-3">
-                          <span className="text-xs font-bold bg-gray-200 text-gray-600 px-2 py-1 rounded">我是</span>
-                          <span className="font-bold text-lg text-gray-800">{pair.giver.name}</span>
-                       </div>
-                       <div className="flex items-center gap-2 text-sm text-gray-500">
-                         {revealedCard === pair.giver.id ? (
-                           <>点击隐藏 <EyeOff size={16} /></>
-                         ) : (
-                           <>点击查看 <Eye size={16} /></>
-                         )}
-                       </div>
-                     </button>
-                     
-                     {revealedCard === pair.giver.id && (
-                       <div className="p-6 bg-gradient-to-r from-red-500 to-red-600 text-center animate-slideDown">
-                          <p className="text-red-100 text-sm mb-1">你的神秘礼物要送给</p>
-                          <div className="text-3xl font-bold text-white flex items-center justify-center gap-2 my-2">
-                            <Gift className="animate-pulse text-yellow-300" />
-                            {pair.receiver.name}
-                          </div>
-                          <p className="text-white/60 text-xs">嘘！不要告诉别人哦</p>
-                       </div>
-                     )}
+            <div className="flex flex-col flex-1 animate-fadeIn">
+               
+               {/* 列表模式 */}
+               {viewStep === 'selection' && (
+                 <>
+                   <div className="bg-yellow-50 border border-yellow-100 rounded-lg p-4 mb-4 text-sm text-yellow-800 flex gap-3 items-start">
+                      <div className="mt-0.5"><User size={16}/></div>
+                      <div>
+                        <strong>抽签已完成！</strong><br/>
+                        找到你的名字，点击查看你的神秘任务。
+                      </div>
                    </div>
-                 ))}
-               </div>
+                   
+                   <div className="grid grid-cols-2 gap-3 overflow-y-auto custom-scrollbar max-h-[350px] content-start">
+                     {assignments.map((pair) => (
+                       <button 
+                        key={pair.giver.id} 
+                        onClick={() => handleNameClick(pair)}
+                        className="flex flex-col items-center justify-center p-4 bg-white border-2 border-gray-100 rounded-xl hover:border-red-500 hover:bg-red-50 hover:shadow-md transition-all group"
+                       >
+                          <div className="w-10 h-10 rounded-full bg-gray-100 group-hover:bg-red-100 text-gray-500 group-hover:text-red-600 flex items-center justify-center font-bold text-lg mb-2 transition-colors">
+                            {pair.giver.name.charAt(0).toUpperCase()}
+                          </div>
+                          <span className="font-bold text-gray-700 group-hover:text-red-700 truncate w-full text-center">
+                            {pair.giver.name}
+                          </span>
+                       </button>
+                     ))}
+                   </div>
+                   
+                   <div className="mt-auto pt-4">
+                     <button 
+                      onClick={resetGame}
+                      className="w-full py-3 text-gray-400 hover:text-red-500 text-sm flex items-center justify-center gap-2 transition-colors"
+                     >
+                       <RotateCcw size={14} /> 结束游戏，重新开始
+                     </button>
+                   </div>
+                 </>
+               )}
 
-               <button 
-                onClick={resetGame}
-                className="w-full mt-4 border-2 border-gray-200 hover:border-red-500 hover:text-red-600 text-gray-500 font-bold py-3 rounded-xl transition-colors flex items-center justify-center gap-2"
-               >
-                 <RotateCcw size={18} />
-                 重新开始
-               </button>
+               {/* 结果展示模式 */}
+               {viewStep === 'reveal' && currentPair && (
+                 <div className="flex flex-col items-center justify-center flex-1 text-center space-y-8 animate-fadeIn">
+                    <div className="space-y-2">
+                       <p className="text-gray-500 uppercase tracking-wider text-xs font-bold">你好，{currentPair.giver.name}</p>
+                       <p className="text-gray-500 uppercase tracking-wider text-xs font-bold">你的送礼对象是</p>
+                       <div className="text-4xl font-extrabold text-gray-800 flex flex-col items-center gap-4 py-6">
+                          <div className="relative">
+                             <div className="absolute inset-0 bg-yellow-300 blur-xl opacity-30 animate-pulse"></div>
+                             <Gift size={80} className="text-red-600 relative z-10" />
+                          </div>
+                          <span className="bg-clip-text text-transparent bg-gradient-to-r from-red-600 to-red-800">
+                            {currentPair.receiver.name}
+                          </span>
+                       </div>
+                    </div>
+
+                    <div className="bg-slate-50 p-6 rounded-xl w-full text-sm text-gray-600 border border-gray-100">
+                       <p>🎁 记得准备一份惊喜礼物哦！</p>
+                    </div>
+
+                    <button 
+                      onClick={handleDone}
+                      className="w-full bg-gray-800 hover:bg-gray-900 text-white font-bold py-4 rounded-xl shadow-xl flex items-center justify-center gap-2 mt-auto"
+                    >
+                      <EyeOff size={20} /> 隐藏结果
+                    </button>
+                 </div>
+               )}
             </div>
           )}
 
         </div>
         
         {/* 底部版权 */}
-        <div className="bg-gray-50 p-3 text-center text-xs text-gray-400 border-t border-gray-100">
+        <div className="bg-gray-50 p-3 text-center text-xs text-gray-400 border-t border-gray-100 shrink-0">
           Merry Christmas & Happy New Year
         </div>
       </div>
@@ -269,13 +300,6 @@ const SecretSantaApp = () => {
         }
         .animate-fadeIn {
           animation: fadeIn 0.5s ease-out forwards;
-        }
-        @keyframes slideDown {
-          from { opacity: 0; height: 0; }
-          to { opacity: 1; height: auto; }
-        }
-        .animate-slideDown {
-          animation: slideDown 0.3s ease-out forwards;
         }
         .animate-spin-slow {
           animation: spin 8s linear infinite;
