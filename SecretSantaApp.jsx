@@ -1,133 +1,68 @@
 import React, { useState, useEffect } from 'react';
-import { Gift, Trash2, UserPlus, Snowflake, Sparkles, Eye, EyeOff, RotateCcw, User, Share2, Copy, Link as LinkIcon, Users } from 'lucide-react';
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, addDoc, doc, onSnapshot, serverTimestamp } from 'firebase/firestore';
+import { Gift, Trash2, UserPlus, Snowflake, Sparkles, Eye, EyeOff, RotateCcw, User, Share2, Copy, Link as LinkIcon, Users, Lock } from 'lucide-react';
 
-// --- Firebase 初始化逻辑 ---
-// 注意：在实际部署时，Vercel 环境会自动注入这些变量。
-// 如果你在本地开发，确保环境模拟了这些变量，或者代码能容错。
-const initFirebase = () => {
+// --- 工具函数：URL 数据压缩与解压 (支持中文) ---
+const encodeData = (data) => {
   try {
-    if (typeof __firebase_config !== 'undefined') {
-      const firebaseConfig = JSON.parse(__firebase_config);
-      const app = initializeApp(firebaseConfig);
-      const auth = getAuth(app);
-      const db = getFirestore(app);
-      const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app';
-      return { auth, db, appId, isConfigured: true };
-    }
+    const jsonStr = JSON.stringify(data);
+    // 简单的混淆，防止直接看 URL 猜出结果
+    const uriEncoded = encodeURIComponent(jsonStr).replace(/%([0-9A-F]{2})/g,
+        function toSolidBytes(match, p1) {
+            return String.fromCharCode('0x' + p1);
+    });
+    return btoa(uriEncoded);
   } catch (e) {
-    console.error("Firebase init error:", e);
+    console.error("Encoding failed", e);
+    return "";
   }
-  return { isConfigured: false };
 };
 
-const { auth, db, appId, isConfigured } = initFirebase();
+const decodeData = (base64) => {
+  try {
+    const str = atob(base64);
+    const uriEncoded = str.split('').map(function(c) {
+        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+    }).join('');
+    return JSON.parse(decodeURIComponent(uriEncoded));
+  } catch (e) {
+    console.error("Decoding failed", e);
+    return null;
+  }
+};
 
 const SecretSantaApp = () => {
-  // --- 基础状态 ---
-  const [user, setUser] = useState(null);
   const [participants, setParticipants] = useState([]);
   const [currentName, setCurrentName] = useState('');
   const [assignments, setAssignments] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
   
-  // --- 房间与路由状态 ---
-  const [roomId, setRoomId] = useState(null);
-  const [isOrganizer, setIsOrganizer] = useState(false);
-  const [shareUrl, setShareUrl] = useState('');
+  const [error, setError] = useState('');
   const [copySuccess, setCopySuccess] = useState(false);
 
-  // --- 视图状态 ---
-  // 'setup': 输入名单阶段 (只有无 roomId 时显示)
+  // 'setup': 输入名单阶段
   // 'shuffling': 动画阶段
   // 'selection': 列表选择阶段
   // 'reveal': 揭晓结果阶段
   const [viewStep, setViewStep] = useState('setup');
   const [currentPair, setCurrentPair] = useState(null);
+  const [isOrganizer, setIsOrganizer] = useState(false); // 本地操作的人是否是生成者
 
-  // 1. 认证与初始化
+  // 初始化：检查 URL 是否包含数据
   useEffect(() => {
-    if (!isConfigured) {
-      setLoading(false);
-      setError("未检测到 Firebase 配置，请在支持云存储的环境运行。");
-      return;
-    }
-
-    const initAuth = async () => {
-      try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
-      } catch (err) {
-        console.error("Auth failed", err);
-        setError("登录服务失败，请刷新重试");
+    const params = new URLSearchParams(window.location.search);
+    const dataParam = params.get('d'); // d for data
+    
+    if (dataParam) {
+      const decoded = decodeData(dataParam);
+      if (decoded && Array.isArray(decoded) && decoded.length > 0) {
+        setAssignments(decoded);
+        setViewStep('selection');
+      } else {
+        setError("链接似乎已损坏，请联系发给你链接的人重新生成。");
       }
-    };
-
-    initAuth();
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      if (u) checkUrlForRoom();
-    });
-    return () => unsubscribe();
+    }
   }, []);
 
-  // 2. 检查 URL 是否带有房间号
-  const checkUrlForRoom = () => {
-    const params = new URLSearchParams(window.location.search);
-    const roomParam = params.get('room');
-    if (roomParam) {
-      setRoomId(roomParam);
-      // 如果有房间号，直接进入监听模式
-      // 这里的 viewStep 会由数据监听来决定
-    } else {
-      setLoading(false);
-      setViewStep('setup');
-    }
-  };
-
-  // 3. 监听房间数据 (当有 user 和 roomId 时)
-  useEffect(() => {
-    if (!user || !roomId || !db) return;
-
-    setLoading(true);
-    // 路径规则：artifacts/{appId}/public/data/secret-santa-rooms/{roomId}
-    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'secret-santa-rooms', roomId);
-
-    const unsubscribe = onSnapshot(roomRef, (snapshot) => {
-      setLoading(false);
-      if (snapshot.exists()) {
-        const data = snapshot.data();
-        setAssignments(data.assignments || []);
-        // 如果拿到数据，且不在揭晓模式，就进入选择模式
-        if (viewStep !== 'reveal') {
-          setViewStep('selection');
-        }
-        
-        // 生成分享链接
-        const url = new URL(window.location.href);
-        url.searchParams.set('room', roomId);
-        setShareUrl(url.toString());
-      } else {
-        setError("找不到这个房间的数据，可能已被删除。");
-        setRoomId(null);
-        setViewStep('setup');
-      }
-    }, (err) => {
-      console.error("Fetch error", err);
-      setLoading(false);
-      setError("读取房间数据失败。");
-    });
-
-    return () => unsubscribe();
-  }, [user, roomId, viewStep]);
-
-  // --- 业务逻辑：输入与管理 ---
+  // --- 业务逻辑 ---
 
   const addParticipant = (e) => {
     e.preventDefault();
@@ -145,23 +80,20 @@ const SecretSantaApp = () => {
     setParticipants(participants.filter(p => p.id !== id));
   };
 
-  // --- 业务逻辑：生成配对并保存到云端 ---
-  const generateAndSave = async () => {
+  const generateAndShare = async () => {
     if (participants.length < 2) {
       setError('至少需要两名参与者才能开始！');
       return;
     }
-    if (!user) return;
 
-    setLoading(true);
     setViewStep('shuffling');
+    setError('');
 
-    // 模拟一点延迟体验动画
+    // 模拟动画
     await new Promise(r => setTimeout(r, 1500));
 
-    // 1. 算法生成
+    // 算法生成
     const shuffled = [...participants];
-    // Fisher-Yates
     for (let i = shuffled.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
@@ -172,34 +104,20 @@ const SecretSantaApp = () => {
     }));
     newAssignments.sort((a, b) => a.giver.name.localeCompare(b.giver.name));
 
-    // 2. 保存到 Firestore
-    try {
-      const collectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'secret-santa-rooms');
-      const docRef = await addDoc(collectionRef, {
-        created_by: user.uid,
-        created_at: serverTimestamp(),
-        assignments: newAssignments,
-        participant_count: participants.length
-      });
-
-      // 3. 更新状态
-      setIsOrganizer(true);
-      setRoomId(docRef.id); // 这会触发上面的 useEffect 监听，自动跳转到 selection
-      
-      // 更新浏览器 URL 方便刷新
-      const newUrl = new URL(window.location.href);
-      newUrl.searchParams.set('room', docRef.id);
-      window.history.pushState({}, '', newUrl);
-
-    } catch (err) {
-      console.error("Save error", err);
-      setError("保存数据失败，请重试");
-      setViewStep('setup');
-      setLoading(false);
-    }
+    setAssignments(newAssignments);
+    
+    // 生成加密链接
+    const encoded = encodeData(newAssignments);
+    const newUrl = new URL(window.location.href);
+    newUrl.searchParams.set('d', encoded); // Set data param
+    
+    // 更新浏览器地址栏，但不刷新页面
+    window.history.pushState({}, '', newUrl);
+    
+    setIsOrganizer(true);
+    setViewStep('selection');
   };
 
-  // --- 业务逻辑：查看结果 ---
   const handleNameClick = (pair) => {
     setCurrentPair(pair);
     setViewStep('reveal');
@@ -211,15 +129,16 @@ const SecretSantaApp = () => {
   };
 
   const copyLink = () => {
+    const url = window.location.href;
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(shareUrl).then(() => {
+      navigator.clipboard.writeText(url).then(() => {
         setCopySuccess(true);
         setTimeout(() => setCopySuccess(false), 2000);
       });
     } else {
-        // Fallback
+        // 备用复制方案
         const textArea = document.createElement("textarea");
-        textArea.value = shareUrl;
+        textArea.value = url;
         document.body.appendChild(textArea);
         textArea.select();
         try {
@@ -227,25 +146,23 @@ const SecretSantaApp = () => {
             setCopySuccess(true);
             setTimeout(() => setCopySuccess(false), 2000);
         } catch (err) {
-            console.error('Fallback: Oops, unable to copy', err);
+            console.error('Fallback copy failed', err);
         }
         document.body.removeChild(textArea);
     }
   };
 
-  const createNewGame = () => {
-      window.location.href = window.location.pathname; // 清除参数重载
+  const resetGame = () => {
+    // 清除 URL 参数并重置
+    const url = new URL(window.location.href);
+    url.searchParams.delete('d');
+    window.history.pushState({}, '', url);
+    
+    setAssignments([]);
+    setParticipants([]);
+    setIsOrganizer(false);
+    setViewStep('setup');
   };
-
-  // --- 渲染部分 ---
-
-  if (loading && viewStep !== 'shuffling') {
-    return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white">
-        <Snowflake className="animate-spin mr-2" /> 连接圣诞网络中...
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 font-sans relative overflow-hidden">
@@ -267,25 +184,23 @@ const SecretSantaApp = () => {
             <Gift className="text-yellow-300" />
             神秘圣诞老人
           </h1>
-          {roomId && <div className="text-red-200 text-xs mt-2 font-mono bg-red-800/30 inline-block px-2 py-1 rounded">房间号: {roomId.slice(0,6)}...</div>}
         </div>
 
         {/* 主要内容 */}
         <div className="p-6 flex-1 flex flex-col relative">
           
-          {/* 错误提示 */}
           {error && (
-            <div className="absolute top-4 left-4 right-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded z-50 text-sm flex justify-between items-center">
+            <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4 text-sm flex justify-between items-center">
                 <span>{error}</span>
                 <button onClick={() => setError('')}><Users size={14}/></button>
             </div>
           )}
 
-          {/* 阶段 1: 组织者设置 (Setup) */}
+          {/* 1. 输入阶段 (Setup) */}
           {viewStep === 'setup' && (
             <div className="space-y-6 animate-fadeIn">
               <div className="text-center text-gray-500 text-sm mb-2">
-                👋 你是组织者。输入所有人的名字，生成后发送链接给他们。
+                👋 请输入所有参与者的名字，然后生成一个链接发给他们。
               </div>
 
               <form onSubmit={addParticipant} className="relative">
@@ -294,7 +209,7 @@ const SecretSantaApp = () => {
                     type="text"
                     value={currentName}
                     onChange={(e) => setCurrentName(e.target.value)}
-                    placeholder="输入参与者名字..."
+                    placeholder="输入名字..."
                     className="flex-1 px-4 py-3 rounded-xl border border-gray-200 focus:border-red-500 focus:ring-2 focus:ring-red-200 outline-none transition-all text-gray-700"
                   />
                   <button 
@@ -318,7 +233,7 @@ const SecretSantaApp = () => {
                 {participants.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-32 text-gray-400 text-sm">
                     <Gift size={32} className="mb-2 opacity-30" />
-                    添加名字开始创建...
+                    添加名字开始...
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -340,17 +255,17 @@ const SecretSantaApp = () => {
               </div>
 
               <button
-                onClick={generateAndSave}
+                onClick={generateAndShare}
                 disabled={participants.length < 2}
                 className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-4 rounded-xl shadow-xl shadow-red-600/30 transition-all transform hover:scale-[1.02] active:scale-95 disabled:opacity-50 disabled:scale-100 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
                 <Sparkles size={20} />
-                生成并创建房间
+                生成并获取链接
               </button>
             </div>
           )}
 
-          {/* 阶段 2: 动画 (Shuffling) */}
+          {/* 2. 动画阶段 */}
           {viewStep === 'shuffling' && (
             <div className="flex flex-col items-center justify-center flex-1 space-y-6">
               <div className="relative">
@@ -358,40 +273,39 @@ const SecretSantaApp = () => {
                 <Gift size={64} className="text-red-600 animate-bounce relative z-10" />
               </div>
               <div className="text-center">
-                <h3 className="text-xl font-bold text-gray-800 mb-2">正在云端匹配...</h3>
-                <p className="text-gray-500 text-sm">正在创建秘密房间</p>
+                <h3 className="text-xl font-bold text-gray-800 mb-2">正在打包数据...</h3>
+                <p className="text-gray-500 text-sm">正在生成秘密链接</p>
               </div>
             </div>
           )}
 
-          {/* 阶段 3: 选择/查看 (Selection) - 所有人可见 */}
+          {/* 3. 选择列表 (Selection) */}
           {viewStep === 'selection' && (
             <div className="flex flex-col h-full animate-fadeIn">
               
-              {/* 顶部提示：如果是刚创建的人，显示分享链接 */}
-              {isOrganizer && (
-                 <div className="bg-green-50 border border-green-100 rounded-lg p-3 mb-3 flex flex-col gap-2">
-                    <div className="flex items-center gap-2 text-green-800 text-sm font-bold">
-                        <Share2 size={16}/> 邀请朋友加入
+              {/* 如果是生成者，显示大大的分享按钮 */}
+              {isOrganizer ? (
+                 <div className="bg-green-50 border border-green-100 rounded-lg p-4 mb-4 flex flex-col gap-3 shadow-sm">
+                    <div className="flex items-center gap-2 text-green-800 font-bold">
+                        <Share2 size={18}/> 第一步：分享给朋友
                     </div>
-                    <div className="flex gap-2">
-                        <input readOnly value={shareUrl} className="flex-1 text-xs bg-white border border-green-200 rounded px-2 py-1 text-gray-500 truncate" />
-                        <button 
-                            onClick={copyLink}
-                            className={`px-3 py-1 rounded text-xs font-bold transition-colors flex items-center gap-1 ${copySuccess ? 'bg-green-600 text-white' : 'bg-green-100 text-green-700 hover:bg-green-200'}`}
-                        >
-                            {copySuccess ? <><Users size={12}/> 已复制</> : <><Copy size={12}/> 复制</>}
-                        </button>
+                    <div className="text-xs text-green-700">
+                        所有结果都已保存在这个链接里。发给朋友们，他们打开就能看到自己的任务。
                     </div>
+                    <button 
+                        onClick={copyLink}
+                        className={`w-full py-3 rounded-lg font-bold transition-all flex items-center justify-center gap-2 shadow-sm ${copySuccess ? 'bg-green-600 text-white scale-95' : 'bg-white text-green-700 border border-green-200 hover:bg-green-100'}`}
+                    >
+                        {copySuccess ? <><Users size={16}/> 链接已复制！去微信粘贴吧</> : <><Copy size={16}/> 点击复制链接</>}
+                    </button>
                  </div>
-              )}
-
-              {!isOrganizer && (
+              ) : (
+                  // 普通用户看到的提示
                   <div className="bg-yellow-50 border border-yellow-100 rounded-lg p-4 mb-4 text-sm text-yellow-800 flex gap-3 items-start">
                     <div className="mt-0.5"><User size={16}/></div>
                     <div>
-                        <strong>房间已就绪！</strong><br/>
-                        找到你自己的名字，查看你的送礼对象。
+                        <strong>找到你自己的名字</strong><br/>
+                        点击名字，查看你的送礼对象。
                     </div>
                 </div>
               )}
@@ -413,13 +327,13 @@ const SecretSantaApp = () => {
                 ))}
               </div>
 
-              <button onClick={createNewGame} className="mt-2 text-xs text-gray-400 hover:text-gray-600 flex items-center justify-center gap-1 py-2">
-                <RotateCcw size={12} /> 创建一个新的抽签
+              <button onClick={resetGame} className="mt-2 text-xs text-gray-400 hover:text-red-400 flex items-center justify-center gap-1 py-2 transition-colors">
+                <RotateCcw size={12} /> 结束并开始新一轮
               </button>
             </div>
           )}
 
-          {/* 阶段 4: 揭晓结果 (Reveal) */}
+          {/* 4. 揭晓结果 (Reveal) */}
           {viewStep === 'reveal' && currentPair && (
             <div className="flex flex-col items-center justify-center flex-1 text-center space-y-8 animate-fadeIn">
               <div className="space-y-2">
